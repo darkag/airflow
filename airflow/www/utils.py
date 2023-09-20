@@ -339,7 +339,7 @@ def generate_pages(
 
     output.append(previous_node.format(href_link=page_link, disabled=is_disabled))
 
-    mid = int(window / 2)
+    mid = window // 2
     last_page = num_of_pages - 1
 
     if current_page <= mid or num_of_pages < window:
@@ -775,7 +775,8 @@ class AirflowFilterConverter(fab_sqlafilters.SQLAFilterConverter):
             "is_extendedjson",
             [],
         ),
-    ) + fab_sqlafilters.SQLAFilterConverter.conversion_table
+        *fab_sqlafilters.SQLAFilterConverter.conversion_table,
+    )
 
     def __init__(self, datamodel):
         super().__init__(datamodel)
@@ -876,7 +877,8 @@ class DagRunCustomSQLAInterface(CustomSQLAInterface):
 # place
 FieldConverter.conversion_table = (
     ("is_utcdatetime", DateTimeWithTimezoneField, AirflowDateTimePickerWidget),
-) + FieldConverter.conversion_table
+    *FieldConverter.conversion_table,
+)
 
 
 class UIAlert:

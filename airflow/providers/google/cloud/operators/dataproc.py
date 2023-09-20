@@ -245,12 +245,13 @@ class ClusterGenerator:
         return PreemptibilityType(preemptibility.upper())
 
     def _get_init_action_timeout(self) -> dict:
-        match = re.match(r"^(\d+)([sm])$", self.init_action_timeout)
+        match = re.fullmatch(r"(\d+)([sm])", self.init_action_timeout)
         if match:
-            val = float(match.group(1))
-            if match.group(2) == "s":
-                return {"seconds": int(val)}
-            elif match.group(2) == "m":
+            val = int(match.group(1))
+            unit = match.group(2)
+            if unit == "s":
+                return {"seconds": val}
+            elif unit == "m":
                 return {"seconds": int(timedelta(minutes=val).total_seconds())}
 
         raise AirflowException(
@@ -811,18 +812,17 @@ class DataprocScaleClusterOperator(GoogleCloudBaseOperator):
             return None
 
         timeout = None
-        match = re.match(r"^(\d+)([smdh])$", self.graceful_decommission_timeout)
+        match = re.fullmatch(r"(\d+)([smdh])", self.graceful_decommission_timeout)
         if match:
-            if match.group(2) == "s":
-                timeout = int(match.group(1))
-            elif match.group(2) == "m":
-                val = float(match.group(1))
+            val = int(match.group(1))
+            unit = match.group(2)
+            if unit == "s":
+                timeout = val
+            elif unit == "m":
                 timeout = int(timedelta(minutes=val).total_seconds())
-            elif match.group(2) == "h":
-                val = float(match.group(1))
+            elif unit == "h":
                 timeout = int(timedelta(hours=val).total_seconds())
-            elif match.group(2) == "d":
-                val = float(match.group(1))
+            elif unit == "d":
                 timeout = int(timedelta(days=val).total_seconds())
 
         if not timeout:
@@ -1052,10 +1052,10 @@ class DataprocJobBaseOperator(GoogleCloudBaseOperator):
         self.dataproc_jars = dataproc_jars
         self.region = region
 
-        self.job_error_states = job_error_states if job_error_states is not None else {"ERROR"}
+        self.job_error_states = job_error_states or {"ERROR"}
         self.impersonation_chain = impersonation_chain
         self.hook = DataprocHook(gcp_conn_id=gcp_conn_id, impersonation_chain=impersonation_chain)
-        self.project_id = self.hook.project_id if project_id is None else project_id
+        self.project_id = project_id or self.hook.project_id
         self.job_template: DataProcJobBuilder | None = None
         self.job: dict | None = None
         self.dataproc_job_id = None

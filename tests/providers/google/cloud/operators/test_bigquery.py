@@ -26,11 +26,7 @@ import pandas as pd
 import pytest
 from google.cloud.bigquery import DEFAULT_RETRY
 from google.cloud.exceptions import Conflict
-from openlineage.client.facet import (
-    DataSourceDatasetFacet,
-    ExternalQueryRunFacet,
-    SqlJobFacet,
-)
+from openlineage.client.facet import DataSourceDatasetFacet, ExternalQueryRunFacet, SqlJobFacet
 from openlineage.client.run import Dataset
 from openlineage.common.provider.bigquery import BigQueryErrorRunFacet
 
@@ -1897,7 +1893,7 @@ class TestBigQueryValueCheckOperator:
     def test_bigquery_value_check_async(self, mock_hook, create_task_instance_of_operator):
         """
         Asserts that a task is deferred and a BigQueryValueCheckTrigger will be fired
-        when the BigQueryValueCheckOperatorAsync is executed.
+        when the BigQueryValueCheckOperator with deferrable=True is executed.
         """
         ti = create_task_instance_of_operator(
             BigQueryValueCheckOperator,
@@ -1919,11 +1915,11 @@ class TestBigQueryValueCheckOperator:
             exc.value.trigger, BigQueryValueCheckTrigger
         ), "Trigger is not a BigQueryValueCheckTrigger"
 
-    @mock.patch("airflow.providers.google.cloud.operators.bigquery.BigQueryValueCheckOperator.execute")
     @mock.patch("airflow.providers.google.cloud.operators.bigquery.BigQueryValueCheckOperator.defer")
+    @mock.patch("airflow.providers.google.cloud.operators.bigquery.BigQueryValueCheckOperator.check_value")
     @mock.patch("airflow.providers.google.cloud.operators.bigquery.BigQueryHook")
     def test_bigquery_value_check_operator_async_finish_before_deferred(
-        self, mock_hook, mock_defer, mock_execute, create_task_instance_of_operator
+        self, mock_hook, mock_check_value, mock_defer, create_task_instance_of_operator
     ):
         job_id = "123456"
         hash_ = "hash"
@@ -1944,7 +1940,7 @@ class TestBigQueryValueCheckOperator:
 
         ti.task.execute(MagicMock())
         assert not mock_defer.called
-        assert mock_execute.called
+        assert mock_check_value.called
 
     @pytest.mark.parametrize(
         "kwargs, expected",
@@ -1954,13 +1950,17 @@ class TestBigQueryValueCheckOperator:
         ],
     )
     def test_bigquery_value_check_missing_param(self, kwargs, expected):
-        """Assert the exception if require param not pass to BigQueryValueCheckOperatorAsync operator"""
+        """
+        Assert the exception if require param not pass to BigQueryValueCheckOperator with deferrable=True
+        """
         with pytest.raises(AirflowException) as missing_param:
             BigQueryValueCheckOperator(deferrable=True, **kwargs)
         assert missing_param.value.args[0] == expected
 
     def test_bigquery_value_check_empty(self):
-        """Assert the exception if require param not pass to BigQueryValueCheckOperatorAsync operator"""
+        """
+        Assert the exception if require param not pass to BigQueryValueCheckOperator with deferrable=True
+        """
         expected, expected1 = (
             "missing keyword arguments 'sql', 'pass_value'",
             "missing keyword arguments 'pass_value', 'sql'",

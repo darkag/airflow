@@ -22,9 +22,7 @@ import contextlib
 import datetime
 import logging
 import os
-import shutil
 from datetime import timedelta
-from tempfile import mkdtemp
 from typing import Generator
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -210,16 +208,14 @@ class TestSchedulerJob:
         scheduler_job.heartrate = 0
         run_job(scheduler_job, execute_callable=self.job_runner._execute)
 
-    def test_no_orphan_process_will_be_left(self):
-        empty_dir = mkdtemp()
+    def test_no_orphan_process_will_be_left(self, tmp_path):
         current_process = psutil.Process()
         old_children = current_process.children(recursive=True)
         scheduler_job = Job(
             executor=MockExecutor(do_update=False),
         )
-        self.job_runner = SchedulerJobRunner(job=scheduler_job, subdir=empty_dir, num_runs=1)
+        self.job_runner = SchedulerJobRunner(job=scheduler_job, subdir=os.fspath(tmp_path), num_runs=1)
         run_job(scheduler_job, execute_callable=self.job_runner._execute)
-        shutil.rmtree(empty_dir)
 
         # Remove potential noise created by previous tests.
         current_children = set(current_process.children(recursive=True)) - set(old_children)
@@ -1756,10 +1752,7 @@ class TestSchedulerJob:
             # Need to use something that doesn't immediately get marked as success by the scheduler
             BashOperator(task_id="task", bash_command="true")
 
-        dag_run = dag_maker.create_dagrun(
-            state=State.RUNNING,
-            session=session,
-        )
+        dag_run = dag_maker.create_dagrun(state=State.RUNNING, session=session, run_type=DagRunType.SCHEDULED)
 
         # Reach max_active_runs
         for _ in range(3):
@@ -2274,9 +2267,8 @@ class TestSchedulerJob:
         ex_date = dr.execution_date
 
         for tid, state in expected_task_states.items():
-            if state != State.FAILED:
-                continue
-            self.null_exec.mock_task_fail(dag_id, tid, dr.run_id)
+            if state == State.FAILED:
+                self.null_exec.mock_task_fail(dag_id, tid, dr.run_id)
 
         try:
             dag = DagBag().get_dag(dag.dag_id)
@@ -3041,7 +3033,6 @@ class TestSchedulerJob:
         ti.refresh_from_db()
         assert ti.state == State.SUCCESS
 
-    @pytest.mark.skip(reason="This test needs fixing. It's very wrong now and always fails")
     def test_retry_handling_job(self):
         """
         Integration test of the scheduler not accidentally resetting
@@ -3050,9 +3041,11 @@ class TestSchedulerJob:
         dag = self.dagbag.get_dag("test_retry_handling_job")
         dag_task1 = dag.get_task("test_retry_handling_op")
         dag.clear()
+        dag.sync_to_db()
 
-        scheduler_job = Job(jobe_type=SchedulerJobRunner.job_type, heartrate=0)
-        self.job_runner = SchedulerJobRunner(job=scheduler_job, dag_id=dag.dag_id, num_runs=1)
+        scheduler_job = Job(job_type=SchedulerJobRunner.job_type, heartrate=0)
+        self.job_runner = SchedulerJobRunner(job=scheduler_job, num_runs=1)
+        self.job_runner.processor_agent = mock.MagicMock()
         run_job(scheduler_job, execute_callable=self.job_runner._execute)
 
         session = settings.Session()
@@ -3458,7 +3451,50 @@ class TestSchedulerJob:
         self.job_runner = SchedulerJobRunner(job=scheduler_job)
 
         assert excepted is self.job_runner._should_update_dag_next_dagruns(
-            dag, dag_model, number_running, session=session
+            dag, dag_model, total_active_runs=number_running, session=session
+        )
+
+    @pytest.mark.parametrize(
+        "run_type, should_update",
+        [
+            (DagRunType.MANUAL, False),
+            (DagRunType.SCHEDULED, True),
+            (DagRunType.BACKFILL_JOB, True),
+            (DagRunType.DATASET_TRIGGERED, False),
+        ],
+        ids=[
+            DagRunType.MANUAL.name,
+            DagRunType.SCHEDULED.name,
+            DagRunType.BACKFILL_JOB.name,
+            DagRunType.DATASET_TRIGGERED.name,
+        ],
+    )
+    def test_should_update_dag_next_dagruns_after_run_type(self, run_type, should_update, session, dag_maker):
+        """Test that whether next dagrun is updated depends on run type"""
+        with dag_maker(
+            dag_id="test_should_update_dag_next_dagruns_after_run_type",
+            schedule="*/1 * * * *",
+            max_active_runs=10,
+        ) as dag:
+            EmptyOperator(task_id="dummy")
+
+        dag_model = dag_maker.dag_model
+
+        run = dag_maker.create_dagrun(
+            run_id="run",
+            run_type=run_type,
+            execution_date=DEFAULT_DATE,
+            start_date=timezone.utcnow(),
+            state=State.SUCCESS,
+            session=session,
+        )
+
+        session.flush()
+        scheduler_job = Job(executor=self.null_exec)
+        self.job_runner = SchedulerJobRunner(job=scheduler_job)
+
+        assert should_update is self.job_runner._should_update_dag_next_dagruns(
+            dag, dag_model, last_dag_run=run, total_active_runs=0, session=session
         )
 
     def test_create_dag_runs(self, dag_maker):
